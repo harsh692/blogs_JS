@@ -1,11 +1,24 @@
 import Post from "../components/Post"
+import { useEffect, useState } from "react";
+export default function IndexPage() {
 
-export default function IndexPage(){
+    const [posts, setPosts] = useState([]);
+
+    useEffect(() => {
+        fetch('http://localhost:4000/post', {
+            method: 'GET',
+        }).then(response => {
+            response.json().then(posts => {
+                setPosts(posts);
+            });
+        });
+    }, []);
     return (
         <>
-            <Post />
-            <Post />
-            <Post />
+            {posts.length > 0 && posts.map(post => (
+                // eslint-disable-next-line react/jsx-key
+                <Post {...post} />
+            ))}
         </>
     )
 }

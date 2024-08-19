@@ -1,72 +1,153 @@
 const express = require("express");
 const cors = require("cors");
-const {connectToMongodb} = require("./connect.js") 
+const { connectToMongodb } = require("./connect.js")
 const User = require("./models/user.js");
+const Post = require("./models/post.js");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const cookieParser = require("cookie-parser");
+const multer = require("multer");
+const fs = require("fs");
 
 const app = express();
 const PORT = 4000;
 
 connectToMongodb('mongodb://localhost:27017/blogs')
-.then(() => console.log("mongodb connected"));
+    .then(() => console.log("mongodb connected"));
 
 const salt = bcrypt.genSaltSync(10);
 const secret = "sofjdnep9u8iweatfi9hwea";
+const uploadMiddleware = multer({ dest: 'uploads/' });
 
-app.use(cors({credentials:true,origin:'http://localhost:5173'}));
+app.use(cors({ credentials: true, origin: 'http://localhost:5173' }));
 app.use(express.json());
 app.use(cookieParser())
+app.use('/uploads', express.static(__dirname + '/uploads'));
 
-app.post('/register', async (req,res)=>{
-    const {username, password} = req.body;
-    try{
+app.post('/register', async (req, res) => {
+    const { username, password } = req.body;
+    try {
         const userDoc = await User.create({
             username,
-            password:bcrypt.hashSync(password,salt),
+            password: bcrypt.hashSync(password, salt),
         });
         res.json(userDoc);
     }
-    catch(e){
+    catch (e) {
         res.status(400).json(e);
     }
 });
 
-app.post('/login',async(req,res)=>{
-    const{username,password} = req.body;
-    const userDoc = await User.findOne({username});
-    console.log({username:password});
+app.post('/login', async (req, res) => {
+    const { username, password } = req.body;
+    const userDoc = await User.findOne({ username });
+    console.log({ username: password });
     const passOk = bcrypt.compareSync(password, userDoc.password);
-    if(passOk){
+    if (passOk) {
         //logged in
-        jwt.sign({username,id:userDoc._id},secret, {},(err,token)=>{
-            if(err) throw err;
+        jwt.sign({ username, id: userDoc._id }, secret, {}, (err, token) => {
+            if (err) throw err;
             res.cookie('token', token).json({
-                id:userDoc._id,
+                id: userDoc._id,
                 username
             });
         })
     }
-    else{
+    else {
         res.status(400).json("wrong credentials");
     }
 });
 
-app.get('/profile',async (req,res)=>{
-    const {token} = req.cookies;
-    jwt.verify(token, secret, {}, (err,info)=>{
-        if(err) throw err;
-        res.json(info);
-    });
+app.get('/profile', async (req, res) => {
+    const { token } = req.cookies;
+    if (!token) {
+        res.json('not logged in');
+    }
+    else {
+        jwt.verify(token, secret, {}, (err, info) => {
+            if (err) throw err;
+            res.json(info);
+        });
+    }
 });
 
-app.post('/logout', async (req,res)=>{
-    res.cookie('token','').json('ok');
+app.post('/logout', async (req, res) => {
+    res.cookie('token', '').json('ok');
 })
 
-app.listen(PORT,()=>{
+app.post('/post', uploadMiddleware.single('file'), async (req, res) => {
+
+    const { originalname, path } = req.file;
+    const parts = originalname.split('.');
+    const ext = parts[parts.length - 1];
+    const newPath = path + '.' + ext;
+    fs.renameSync(path, newPath)
+
+    //Giving the saved image a new name and extension.
+
+    const { token } = req.cookies;
+    jwt.verify(token, secret, {}, async (err, info) => {
+        if (err) throw err;
+        const { title, summary, content } = req.body;
+        const postDoc = await Post.create({
+            title,
+            summary,
+            content,
+            cover: newPath,
+            author: info.id,
+        });
+        res.json(postDoc)
+    });
+})
+
+app.get('/post', async (req, res) => {
+    const posts = await Post.find()
+        .populate('author', ['username'])
+        .sort({ createdAt: -1 })
+        .limit(20);
+    res.json(posts);
+})
+
+app.get('/post/:id', async (req, res) => {
+    const { id } = req.params;
+    const postDoc = await Post.findById(id).populate('author', ['username']);
+    res.json(postDoc)
+})
+
+app.put('/post', uploadMiddleware.single('file'), async (req, res) => {
+    let newPath = null;
+    if (req.file) {
+        const { originalname, path } = req.file;
+        const parts = originalname.split('.');
+        const ext = parts[parts.length - 1];
+        newPath = path + '.' + ext;
+        fs.renameSync(path, newPath);
+    }
+
+    const { token } = req.cookies;
+    jwt.verify(token, secret, {}, async (err, info) => {
+        if (err) throw err;
+        const { id, title, summary, content } = req.body;
+        console.log(id);
+        const postDoc = await Post.findById(id);
+        const isAuthor = JSON.stringify(postDoc.author) === JSON.stringify(info.id);
+        if (!isAuthor) {
+            return res.status(400).json('you are not the author');
+        }
+        await postDoc.updateOne({
+            title,
+            summary,
+            content,
+            cover: newPath ? newPath : postDoc.cover,
+        });
+
+        res.json(postDoc);
+    });
+
+});
+
+
+app.listen(PORT, () => {
     console.log("server running at http://localhost:4000");
 })
 
-//sP1FUhhCVxTxKtjC
